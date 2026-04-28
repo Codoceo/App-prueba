@@ -1,6 +1,2 @@
 flet
-certifi
-chardet
-idna
-urllib3
-requests
+psycopg2-binary
