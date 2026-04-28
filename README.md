@@ -4,9 +4,12 @@ App de escritorio para registrar actividades diarias con seguimiento de gastos e
 
 ## Requisitos
 
-- Python 3.10+
-- PostgreSQL instalado y corriendo
-- Dependencias Python:
+- Python 3.10+ → https://www.python.org/downloads/
+- PostgreSQL → https://www.enterprisedb.com/downloads/postgres-postgresql-downloads
+
+## Instalación de dependencias
+
+Abre una terminal (cmd o PowerShell) y ejecuta:
 
 ```bash
 pip install flet psycopg2-binary
@@ -14,21 +17,20 @@ pip install flet psycopg2-binary
 
 ## Configuración de la base de datos
 
-1. Instalar PostgreSQL (Arch Linux):
+1. Durante la instalación de PostgreSQL se te pedirá una contraseña para el usuario `postgres`. Anótala.
+
+2. Abre **pgAdmin** (se instala junto a PostgreSQL) o usa la terminal:
 ```bash
-sudo pacman -S postgresql
-sudo -u postgres initdb -D /var/lib/postgres/data
-sudo systemctl start postgresql
-sudo systemctl enable postgresql
+psql -U postgres
 ```
 
-2. Crear la base de datos:
-```bash
-sudo -u postgres psql -c "CREATE DATABASE bitacora;"
-sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'tu_contraseña';"
+3. Crea la base de datos:
+```sql
+CREATE DATABASE bitacora;
+\q
 ```
 
-3. Editar las credenciales en `main.py`:
+4. Edita las credenciales en `main.py`:
 ```python
 DB_CONFIG = {
     "host":     "localhost",
@@ -57,11 +59,11 @@ python main.py
 
 Tabla `registros`:
 
-| Columna   | Tipo    | Descripción                        |
-|-----------|---------|------------------------------------|
-| id        | SERIAL  | Clave primaria autoincremental     |
-| fecha     | TEXT    | Fecha y hora (dd/mm/yyyy HH:MM)    |
-| texto     | TEXT    | Descripción de la actividad        |
-| monto     | INTEGER | Monto en CLP (negativo = gasto)    |
+| Columna   | Tipo    | Descripción                          |
+|-----------|---------|--------------------------------------|
+| id        | SERIAL  | Clave primaria autoincremental       |
+| fecha     | TEXT    | Fecha y hora (dd/mm/yyyy HH:MM)      |
+| texto     | TEXT    | Descripción de la actividad          |
+| monto     | INTEGER | Monto en CLP (negativo = gasto)      |
 | categoria | TEXT    | Gimnasio / Comida / Gastos / General |
-| comida    | TEXT    | Nombre del plato (solo en Comida)  |
+| comida    | TEXT    | Nombre del plato (solo en Comida)    |
