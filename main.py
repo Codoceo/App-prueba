@@ -1,9 +1,58 @@
+# =============================================================================
+# MIGRACIÓN DE SQLite → PostgreSQL
+# =============================================================================
+# SQLite guarda los datos en un archivo local (bitacora.db).
+# PostgreSQL es un servidor de base de datos real que corre por separado.
+#
+# ANTES DE EJECUTAR necesitas:
+#   1. Tener PostgreSQL instalado: https://www.postgresql.org/download/
+#   2. Instalar el driver de Python:  pip install psycopg2-binary
+#   3. Crear la base de datos en PostgreSQL:
+#        En la terminal escribe:  psql -U postgres
+#        Luego ejecuta:           CREATE DATABASE bitacora;
+#   4. Ajusta DB_CONFIG más abajo con tu usuario y contraseña.
+# =============================================================================
+
 import flet as ft
-import sqlite3
+import psycopg2          # ← reemplaza a "import sqlite3"
 from datetime import datetime
 import re
 
+# =============================================================================
+# CONFIGURACIÓN DE CONEXIÓN
+# =============================================================================
+# Aquí defines los datos para conectarte al servidor PostgreSQL.
+# En SQLite solo necesitabas el nombre del archivo ("bitacora.db"),
+# pero en PostgreSQL necesitas saber en qué máquina está, quién eres y con qué clave.
+#
+#   host     → dónde está el servidor. "localhost" = en tu misma computadora.
+#   port     → puerto por defecto de PostgreSQL (no lo cambies salvo que sepas).
+#   dbname   → nombre de la base de datos que creaste arriba.
+#   user     → usuario de PostgreSQL. El que se crea por defecto es "postgres".
+#   password → la contraseña que pusiste al instalar PostgreSQL.
+# =============================================================================
+DB_CONFIG = {
+    "host":     "localhost",
+    "port":     5432,
+    "dbname":   "bitacora",
+    "user":     "postgres",
+    "password": "admin123",
+}
+
+# =============================================================================
+# FUNCIÓN AUXILIAR: obtener conexión
+# =============================================================================
+# En SQLite hacías: conn = sqlite3.connect("bitacora.db")
+# En PostgreSQL:    conn = psycopg2.connect(**DB_CONFIG)
+#
+# Envolver esto en una función evita repetir los parámetros en cada lugar.
+# El ** antes de DB_CONFIG "desempaqueta" el diccionario como argumentos sueltos.
+# =============================================================================
+def get_conn():
+    return psycopg2.connect(**DB_CONFIG)
+
 # --- EXTRACCIÓN DE MONTO CLP (soporta negativos) ---
+# Esta función no tiene nada de base de datos, queda igual.
 def extraer_monto_clp(texto):
     texto_lower = texto.lower()
     negativo = False
@@ -26,22 +75,37 @@ def extraer_monto_clp(texto):
 
     return 0
 
-# --- BASE DE DATOS ---
+# =============================================================================
+# CREAR TABLA SI NO EXISTE
+# =============================================================================
+# Diferencias clave respecto a SQLite:
+#
+#   SQLite:     id INTEGER PRIMARY KEY  → se autoincrementa solo
+#   PostgreSQL: id SERIAL PRIMARY KEY   → SERIAL es el tipo que se autoincrementa
+#
+#   SQLite:     fecha TEXT              → SQLite no tiene tipo fecha real
+#   PostgreSQL: fecha TEXT              → lo dejamos en TEXT para no cambiar el
+#                                         formato "dd/mm/yyyy HH:MM" que ya usamos
+#
+# El resto de la query es SQL estándar y funciona igual en ambos motores.
+# =============================================================================
 def init_db():
-    conn = sqlite3.connect("bitacora.db")
+    conn = get_conn()
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS registros (
-                    id INTEGER PRIMARY KEY,
-                    fecha TEXT,
-                    texto TEXT,
-                    monto INTEGER,
-                    categoria TEXT,
-                    comida TEXT
-                )''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS registros (
+            id        SERIAL PRIMARY KEY,
+            fecha     TEXT,
+            texto     TEXT,
+            monto     INTEGER,
+            categoria TEXT,
+            comida    TEXT
+        )
+    ''')
     conn.commit()
     conn.close()
 
-# --- COLORES POR CATEGORÍA ---
+# --- COLORES POR CATEGORÍA --- (sin cambios, no tiene que ver con la BD)
 CATEGORIA_COLORES = {
     "Gimnasio": {"bg": "#E8F5E9", "icon": "🏋️", "badge": "#2E7D32"},
     "Comida":   {"bg": "#FFF8E1", "icon": "🍽️", "badge": "#F57F17"},
@@ -57,10 +121,8 @@ def main(page: ft.Page):
 
     init_db()
 
-    # --- ESTADO (sin ft.Ref, usando dict simple) ---
     estado = {"categoria": "General", "filtro": "Todos"}
 
-    # --- COMPONENTES ---
     input_texto = ft.TextField(
         hint_text="Describe tu actividad... (ej: Almorcé pizza, gasté 5k)",
         expand=True,
@@ -83,9 +145,14 @@ def main(page: ft.Page):
     balance_texto = ft.Text("Balance: $ 0", size=18, weight="bold", color="#1A237E")
     lista_registros = ft.Column(scroll=ft.ScrollMode.ALWAYS, expand=True, spacing=8)
 
-    # --- BALANCE ---
+    # =========================================================================
+    # CALCULAR BALANCE
+    # =========================================================================
+    # La query SELECT SUM(...) es idéntica en SQLite y PostgreSQL.
+    # Solo cambia cómo abrimos la conexión (get_conn() en vez de sqlite3.connect).
+    # =========================================================================
     def calcular_balance():
-        conn = sqlite3.connect("bitacora.db")
+        conn = get_conn()
         c = conn.cursor()
         c.execute("SELECT SUM(monto) FROM registros")
         total = c.fetchone()[0] or 0
@@ -99,16 +166,32 @@ def main(page: ft.Page):
         balance_texto.value = f"Balance: {signo}$ {abs(total):,}".replace(",", ".")
         balance_texto.color = color
 
-    # --- CARGA DE DATOS ---
+    # =========================================================================
+    # CARGAR DATOS
+    # =========================================================================
+    # Aquí hay un cambio importante en los PLACEHOLDERS:
+    #
+    #   SQLite     usa  ?   como marcador de parámetro:  WHERE categoria=?
+    #   PostgreSQL usa  %s  como marcador de parámetro:  WHERE categoria=%s
+    #
+    # Esto es solo una diferencia de sintaxis entre los dos drivers de Python.
+    # Internamente ambos hacen lo mismo: evitar SQL injection reemplazando
+    # el marcador por el valor real de forma segura.
+    # =========================================================================
     def cargar_datos(filtro="Todos"):
         lista_registros.controls.clear()
-        conn = sqlite3.connect("bitacora.db")
+        conn = get_conn()
         c = conn.cursor()
 
         if filtro == "Todos":
             c.execute("SELECT texto, fecha, monto, categoria, comida FROM registros ORDER BY id DESC")
         else:
-            c.execute("SELECT texto, fecha, monto, categoria, comida FROM registros WHERE categoria=? ORDER BY id DESC", (filtro,))
+            # Antes: WHERE categoria=?
+            # Ahora: WHERE categoria=%s   ← único cambio en esta query
+            c.execute(
+                "SELECT texto, fecha, monto, categoria, comida FROM registros WHERE categoria=%s ORDER BY id DESC",
+                (filtro,)
+            )
 
         rows = c.fetchall()
         conn.close()
@@ -136,7 +219,7 @@ def main(page: ft.Page):
                     content=ft.Text(f"🍽️ {comida}", size=11, color="#F57F17", weight="bold"),
                     bgcolor="#FFF3CD",
                     border_radius=8,
-                    padding=ft.padding.symmetric(horizontal=8, vertical=3),
+                    padding=ft.Padding.symmetric(horizontal=8, vertical=3),
                     visible=bool(comida),
                 )
 
@@ -147,7 +230,7 @@ def main(page: ft.Page):
                                 content=ft.Text(cfg["icon"], size=18),
                                 bgcolor=cfg["badge"],
                                 border_radius=8,
-                                padding=ft.padding.symmetric(horizontal=8, vertical=4),
+                                padding=ft.Padding.symmetric(horizontal=8, vertical=4),
                             ),
                             ft.Text(categoria, size=12, color=cfg["badge"], weight="bold"),
                             ft.Container(expand=True),
@@ -170,23 +253,34 @@ def main(page: ft.Page):
         actualizar_balance()
         page.update()
 
-    # --- GUARDAR ---
+    # =========================================================================
+    # GUARDAR REGISTRO
+    # =========================================================================
+    # Mismo cambio de placeholders: ? → %s en el INSERT.
+    #
+    # También nota el patrón "commit / close":
+    #   - conn.commit() → confirma y guarda los cambios en la base de datos.
+    #                     Sin esto, el INSERT existe solo en memoria y se pierde.
+    #   - conn.close()  → libera la conexión al servidor.
+    #
+    # Este patrón es igual en SQLite y PostgreSQL.
+    # =========================================================================
     def guardar(e):
         if not input_texto.value.strip():
             return
 
         texto = input_texto.value.strip()
         monto = extraer_monto_clp(texto)
-        
-        
         fecha = datetime.now().strftime("%d/%m/%Y %H:%M")
         cat = estado["categoria"]
         comida = input_comida.value.strip() if cat == "Comida" else ""
 
-        conn = sqlite3.connect("bitacora.db")
+        conn = get_conn()
         c = conn.cursor()
+        # Antes: VALUES (?, ?, ?, ?, ?)
+        # Ahora: VALUES (%s, %s, %s, %s, %s)   ← mismo cambio de placeholders
         c.execute(
-            "INSERT INTO registros (fecha, texto, monto, categoria, comida) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO registros (fecha, texto, monto, categoria, comida) VALUES (%s, %s, %s, %s, %s)",
             (fecha, texto, monto, cat, comida)
         )
         conn.commit()
@@ -198,7 +292,7 @@ def main(page: ft.Page):
 
     input_texto.on_submit = guardar
 
-    # --- MENÚ DE CATEGORÍAS ---
+    # --- MENÚ DE CATEGORÍAS --- (sin cambios)
     botones_cat = []
 
     def cambiar_categoria(cat):
@@ -225,7 +319,7 @@ def main(page: ft.Page):
             ], spacing=4, tight=True),
             bgcolor=cfg["badge"] if es_seleccionado else cfg["bg"],
             border_radius=20,
-            padding=ft.padding.symmetric(horizontal=12, vertical=7),
+            padding=ft.Padding.symmetric(horizontal=12, vertical=7),
             on_click=lambda e, c=cat: cambiar_categoria(c),
             ink=True,
         )
@@ -233,7 +327,7 @@ def main(page: ft.Page):
 
     fila_categorias = ft.Row(botones_cat, scroll=ft.ScrollMode.AUTO, spacing=8)
 
-    # --- FILTROS DE VISTA ---
+    # --- FILTROS DE VISTA --- (sin cambios)
     botones_filtro = []
 
     def cambiar_filtro(f):
@@ -254,7 +348,7 @@ def main(page: ft.Page):
                             color="white" if op == "Todos" else "#1A237E"),
             bgcolor="#1A237E" if op == "Todos" else "#E8EAF6",
             border_radius=15,
-            padding=ft.padding.symmetric(horizontal=11, vertical=6),
+            padding=ft.Padding.symmetric(horizontal=11, vertical=6),
             on_click=lambda e, f=op: cambiar_filtro(f),
             ink=True,
         )
@@ -262,9 +356,8 @@ def main(page: ft.Page):
 
     fila_filtros = ft.Row(botones_filtro, scroll=ft.ScrollMode.AUTO, spacing=6)
 
-    # --- LAYOUT PRINCIPAL ---
+    # --- LAYOUT PRINCIPAL --- (sin cambios, es solo interfaz)
     page.add(
-        # Header
         ft.Container(
             content=ft.Row([
                 ft.Column([
@@ -276,15 +369,13 @@ def main(page: ft.Page):
                     content=balance_texto,
                     bgcolor="#0D1B6E",
                     border_radius=12,
-                    padding=ft.padding.symmetric(horizontal=14, vertical=8),
+                    padding=ft.Padding.symmetric(horizontal=14, vertical=8),
                 ),
             ]),
             bgcolor="#1A237E",
-            padding=ft.padding.symmetric(horizontal=20, vertical=18),
-            border_radius=ft.border_radius.only(bottom_left=20, bottom_right=20),
+            padding=ft.Padding.symmetric(horizontal=20, vertical=18),
+            border_radius=ft.BorderRadius.only(bottom_left=20, bottom_right=20),
         ),
-
-        # Formulario de ingreso
         ft.Container(
             content=ft.Column([
                 ft.Text("Nueva entrada", size=14, weight="bold", color="#455A64"),
@@ -293,7 +384,7 @@ def main(page: ft.Page):
                 input_comida,
                 ft.Row([
                     ft.Container(expand=True),
-                    ft.ElevatedButton(
+                    ft.Button(
                         content=ft.Row([
                             ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE, color="white", size=18),
                             ft.Text("Guardar", color="white", weight="bold"),
@@ -305,29 +396,25 @@ def main(page: ft.Page):
                 ]),
             ], spacing=10),
             bgcolor="white",
-            margin=ft.margin.symmetric(horizontal=12, vertical=10),
+            margin=ft.Margin.symmetric(horizontal=12, vertical=10),
             padding=16,
             border_radius=18,
             shadow=ft.BoxShadow(blur_radius=10, color="black12", offset=ft.Offset(0, 3)),
         ),
-
-        # Filtros de vista
         ft.Container(
             content=ft.Column([
                 ft.Text("Registros recientes", size=14, weight="bold", color="#455A64"),
                 fila_filtros,
             ], spacing=8),
-            padding=ft.padding.symmetric(horizontal=16, vertical=6),
+            padding=ft.Padding.symmetric(horizontal=16, vertical=6),
         ),
-
-        # Lista de registros
         ft.Container(
             content=lista_registros,
             expand=True,
-            padding=ft.padding.symmetric(horizontal=12),
+            padding=ft.Padding.symmetric(horizontal=12),
         ),
     )
 
     cargar_datos()
 
-ft.app(target=main)
+ft.run(main)
