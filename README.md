@@ -1,4 +1,4 @@
-# Mi Bitácora Pro
+# Actividades Diarias 
 
 App de escritorio para registrar actividades diarias con seguimiento de gastos en pesos chilenos (CLP). Construida con Flet (Python) y PostgreSQL.
 
