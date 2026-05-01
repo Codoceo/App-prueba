@@ -2,20 +2,26 @@ import flet as ft
 import psycopg2
 from datetime import datetime
 import re
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # =============================================================================
 # CONEXIÓN
 # =============================================================================
-DB_CONFIG = {
-    "host":     "localhost",
-    "port":     5432,
-    "dbname":   "bitacora",
-    "user":     "postgres",
-    "password": "Codoceo065*#",
-}
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 def get_conn():
-    return psycopg2.connect(**DB_CONFIG)
+    if DATABASE_URL:
+        return psycopg2.connect(DATABASE_URL)
+    return psycopg2.connect(
+        host="localhost",
+        port=5432,
+        dbname="bitacora",
+        user="postgres",
+        password="postgres"
+    )
 
 # =============================================================================
 # TRIGGERS DE CATEGORÍA
